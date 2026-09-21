@@ -18,13 +18,13 @@ import time
 from typing import Optional
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-mcp = FastMCP("domo_mcp", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+mcp = MCPServer("domo_mcp")
 
 DOMO_OAUTH_URL = "https://api.domo.com/oauth/token"
 DOMO_DATASETS_URL = "https://api.domo.com/v1/datasets"
@@ -332,6 +332,9 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
 if __name__ == "__main__":
     import uvicorn
 
-    app = mcp.streamable_http_app()
+    # host="0.0.0.0" here is only about the SDK's DNS-rebinding auto-protection
+    # (it only auto-enables for 127.0.0.1/localhost); the actual bind address/port
+    # for the container is set on uvicorn.run() below.
+    app = mcp.streamable_http_app(host="0.0.0.0")
     app.add_middleware(BearerAuthMiddleware)
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
