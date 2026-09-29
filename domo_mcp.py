@@ -324,6 +324,9 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next):
+        # Unauthenticated liveness check; reveals nothing but the auth mode.
+        if request.url.path == "/health":
+            return JSONResponse({"status": "ok", "auth": "header+query-token"})
         expected = os.environ.get("MCP_AUTH_TOKEN")
         if not expected:
             raise RuntimeError(
