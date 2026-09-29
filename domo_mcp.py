@@ -327,6 +327,11 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
         # Unauthenticated liveness check; reveals nothing but the auth mode.
         if request.url.path == "/health":
             return JSONResponse({"status": "ok", "auth": "header+query-token"})
+        # No OAuth here: answer discovery/registration probes with 404 (not 401)
+        # so clients don't conclude OAuth is required and try to register.
+        path = request.url.path
+        if path.startswith("/.well-known/") or path in ("/register", "/authorize", "/token"):
+            return JSONResponse({"error": "not_found"}, status_code=404)
         expected = os.environ.get("MCP_AUTH_TOKEN")
         if not expected:
             raise RuntimeError(
