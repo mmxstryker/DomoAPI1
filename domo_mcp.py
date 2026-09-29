@@ -12,19 +12,20 @@ DOMO_CLIENT_ID / DOMO_CLIENT_SECRET from the environment (set these in your
 Claude Desktop / Claude Code MCP config — never hardcode them here).
 """
 
+import hmac
 import json
 import os
 import time
 from typing import Optional
 
 import httpx
-from mcp.server.mcpserver import MCPServer
+from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-mcp = MCPServer("domo_mcp")
+mcp = FastMCP("domo_mcp", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
 
 DOMO_OAUTH_URL = "https://api.domo.com/oauth/token"
 DOMO_DATASETS_URL = "https://api.domo.com/v1/datasets"
@@ -310,7 +311,12 @@ async def domo_query_toolkit_leads(params: QueryToolkitLeadsInput) -> str:
 
 
 class BearerAuthMiddleware(BaseHTTPMiddleware):
-    """Reject any request that doesn't present MCP_AUTH_TOKEN as a bearer token.
+    """Reject any request that doesn't present MCP_AUTH_TOKEN.
+
+    The token is accepted either as an `Authorization: Bearer <token>` header
+    or as a `?token=<token>` query parameter (for clients like Claude custom
+    connectors that only take a URL). Comparison is constant-time. Never log
+    the query string: uvicorn's access log is disabled in __main__ for this.
 
     This is a separate secret from your Domo credentials — it's what stops
     anyone who finds this server's URL from calling it at all. Required once
@@ -324,7 +330,12 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
                 "MCP_AUTH_TOKEN is not set. Refusing to start a network-reachable "
                 "server with no auth check — set it in your host's environment/secrets."
             )
-        if request.headers.get("authorization") != f"Bearer {expected}":
+        header = request.headers.get("authorization", "")
+        supplied = header[7:] if header.lower().startswith("bearer ") else ""
+        query_token = request.query_params.get("token", "")
+        ok_header = hmac.compare_digest(supplied.encode(), expected.encode())
+        ok_query = hmac.compare_digest(query_token.encode(), expected.encode())
+        if not (ok_header or ok_query):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         return await call_next(request)
 
@@ -332,9 +343,9 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
 if __name__ == "__main__":
     import uvicorn
 
-    # host="0.0.0.0" here is only about the SDK's DNS-rebinding auto-protection
-    # (it only auto-enables for 127.0.0.1/localhost); the actual bind address/port
-    # for the container is set on uvicorn.run() below.
-    app = mcp.streamable_http_app(host="0.0.0.0")
+    app = mcp.streamable_http_app()
     app.add_middleware(BearerAuthMiddleware)
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+    # access_log=False: the request line would include ?token=... in the logs.
+    uvicorn.run(
+        app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), access_log=False
+    )
